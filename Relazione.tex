@@ -1,0 +1,81 @@
+\documentclass[a4paper,12pt]{report}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{graphicx, amsmath, amssymb}
+
+\begin{document}
+
+\title{Cache-Control: immutable}
+\author{Marco Colognese VR386474\\ Mattia Rossini VR386327}\date{}
+\maketitle
+
+
+
+\tableofcontents
+
+
+\chapter{Uno spreco di risorse}
+Circa un anno fa gli sviluppatori di Facebook portarono al “{\itshape IETF HTTP Working Group}” un problema che stavano riscontrando: una grande quantità (circa il $20\%$) del traffico di dati verso i loro server era rappresentato da richieste di aggiornamento per risorse con un lungo "{\itshape cache lifetime}" ed il numero era destinano a crescere.
+Queste richieste, poiché riguardano risorse che non subiscono modifiche per periodi molto lunghi, vengono sempre liquidate con un "{\itshape 304 - Not Modified}”.
+Ciò rappresenta un inutile aumento di traffico nella rete e uno spreco di tempo per client e server.
+
+
+
+\section{La soluzione ideale}
+Tale problema è facilmente riscontrabile su siti quali social network (es. {\itshape Facebook}) o siti di news in tempo reale, in cui si aggiorna spesso la pagina per avere sempre nuovi contenuti; però vengono aggiornate anche risorse “statiche” come i loghi del sito.
+La soluzione ideale, per evitare questo inutile spreco, consiste nel mandare richieste solamente per le risorse dinamiche, tralasciando quelle che non subiranno modifiche per periodi di tempo molto lunghi.
+
+
+
+\chapter{L'estensione "immutable"}
+Per implementare questa soluzione si è pensato di aggiungere un token nel campo Cache-Control del protocollo HTTP: "{\itshape immutable}" (inizialmente si era pensato per "{\itshape never-revalidate}").
+Questa modifica (presente solamente in {\itshape Firefox 49}) ha un grosso vantaggio: può essere attuata senza andare a modificare le cache già esistenti poiché è un’estensione dell’informazione, non del funzionamento. Infatti tale token deve essere considerato solo dalle cache che lo riconoscono, altrimenti viene semplicemente ignorato.
+
+\section{Il suo utilizzo}
+Questa estensione deve essere applicata a tutte quelle risorse che, a detta dei server administrator, non subiranno mai modifiche (o almeno non le subiranno per tempi molto lunghi).
+Una cache che si trova di fronte ad una richiesta per una risorsa “{\itshape immutable}”, deve mandare al client la copia in essa salvata senza inviare mai nessuna richiesta al server per verificare che essa sia aggiornata.
+Per trarne effettivamente dei vantaggi, però, è necessario che tale token non venga assegnato a risorse con un “{\itshape max-age}” troppo breve, altrimenti è molto probabile che si verifichi una inconsistenza di informazioni.
+
+
+\chapter{Dubbi/problemi sull'utilizzo}
+Un problema che era stato sollevato riguardava l’utilizzo del “{\itshape max-age}”: se esso scade, la risorsa viene aggiornata? No, poiché i server administrator assicurano che l’estensione “{\itshape immutable}” viene utilizzata solamente per informazioni che restano appunto immutate. Se tale informazione dovesse essere modificata, le verrà assegnato un nuovo URL.
+
+\section{Hard-refresh}
+C’è comunque un modo per aggiornare la pagina senza tener conto delle risorse in cache? E’ possibile, si tratta di una richiesta di “refresh” non condizionale che permette di mandare una richiesta per risorse aggiornate ignorando la cache ({\itshape cmd+shift+R} oppure {\itshape ctrl+F5}). Facendo ciò, possiamo avere la certezza di non avere inconsistenza di risorse.
+Questo funzione viene utilizzata anche per ignorare “immutable” nel caso in cui fossero arrivate al client delle risorse troncate a causa di una cattiva connessione; un hard-refresh è necessario per ricaricare correttamente la pagina.
+Però sono davvero pochi gli utenti che conoscono e fanno uso di questa funzionalità.
+
+\section{Problemi in caso di connessione lenta}
+Un altro problema si verifica quando, nel tentativo di aggiornare una pagina, si presentano problemi di rete (connessione lenta) che impediscono nuovamente di ottenere il caricamento completo. Ciò accade poiché le richieste “{\itshape If-Modified-Since}” e “{\itshape If-None-Match}” effettuano controlli su “{\itshape Date cached}” e non su eventuali troncamenti (es. “{\itshape Content-Length}”); la risposta, dunque, sarà sempre un “{\itshape 304 – Not-Modified}” anche se non è davvero così.
+
+\subsection{OnStopRequest: un token ausiliario}
+Una soluzione proposta consiste nel continuare ad utilizzare la copia già salvata in cache, incrementandone il tempo di validazione; il client rischia però di utilizzare, per un tempo non precisato, delle risorse non aggiornate (con possibili inconsistenze).
+E’ stato anche proposto di utizzare il token “{\itshape OnStopRequest}” sulla entry della cache che contiene una risorsa che non deve essere riutilizzata, poiché corrotta.
+
+\section{Immutable-subresources}
+Un utente aveva proposto anche l’utilizzo del toke “{\itshape immutable-subresources}” sulla pagina principale del sito web. Esso avrebbe indicato che tutte le sottorisorse della pagina sono immutabili (in modo da non dover indicare “{\itshape immutable}” su ogni risorsa). La proposta è stata subito bocciata poiché è molto raro trovare pagine con tutte le sottorisorse immutabili.
+
+
+
+\chapter{Conclusioni}
+
+\section{Le modifiche client/server}
+L’implementare corretta di questo token richiede delle modifiche a lato client e server:
+\begin{itemize}
+\item i client devono installare dei plug-in che permettano alle loro memorie cache di riconoscere l’estensione “{\itshape immutable}”;
+\item i server administrator devono aggiungere il token al Cache-Control di ogni risorsa che non sarà modificata per periodi di tempo molto lunghi;
+\end{itemize}
+
+
+\section{Lo scarso interesse degli altri browser}
+Attualmente “{\itshape immutable}” è stato implementato solo su {\itshape Firefox 49} piochè è ancora in fase di sviluppo e ad altri browser, come Chrome, ha suscitato poco interesse. Ciò è dovuto alle imperfezioni ancora presenti:
+\begin{itemize}
+\item non è possibile ignorare “{\itshape immutable}” nel caso in cui scada il “{\itshape max-age}” della risorsa;
+\item richiedere un “{\itshape hard-refresh}” per ricaricare una pagina incompleta a causa della connessione non è una buona soluzione, essendo una funzionalità ancora sconosciuta alla gran parte degli utenti;
+\item necessità di indicare le pagine corrotte in cache (a causa della connessione) che non devono essere riutilizzate per evitare di inviare ai client dei contenuti non più validi.
+\end{itemize}
+
+
+
+\end{document}
